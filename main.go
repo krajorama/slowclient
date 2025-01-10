@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"time"
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
@@ -113,18 +114,29 @@ func main() {
 		return
 	}
 
-	//time.Sleep(10 * time.Second)
+	
 
 	log.Println("Sending data", influxData)
-	err = framer.WriteData(streamID, false, []byte(influxData))
-	if err != nil {
-		log.Println(err)
-		return
+	for _, c := range influxData {
+		part := string(c)
+		err = framer.WriteData(streamID, false, []byte(part))
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		time.Sleep(1000*time.Millisecond)
 	}
+
+	// time.Sleep(40 * time.Second)
+	// err = framer.WriteData(streamID, false, []byte(influxData1))
+	// if err != nil {
+	// 	log.Println(err)
+	// 	return
+	// }
 
 	for {
 		// Read response
-		log.Println("Reading response")
+		log.Println("Reading response ----------")
 		f, err = framer.ReadFrame()
 		if err != nil {
 			log.Println(err)
@@ -138,24 +150,25 @@ func main() {
 			dec := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
 				log.Println(hf.Name, hf.Value)
 			})
-			dec.DecodeFull(b)
-		}
-		if f.Header().Type == http2.FrameGoAway || f.Header().Type == http2.FrameData || f.Header().Type == http2.FrameRSTStream {
-			break
+			h, err := dec.DecodeFull(b)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			log.Println("Decoded headers", h)
+		case http2.FrameData:
+			d := f.(*http2.DataFrame)
+			log.Println("Got data frame", string(d.Data()))
+		case http2.FrameGoAway:
+			log.Println("Error code", f.(*http2.GoAwayFrame).ErrCode)
+			log.Println(string(f.(*http2.GoAwayFrame).DebugData()))
+		case http2.FrameRSTStream:
+			log.Println("Error code", f.(*http2.RSTStreamFrame).ErrCode)
+			log.Println("String", f.(*http2.RSTStreamFrame).String())
+		case http2.FramePing:
+			log.Println("Ping")
+			return
 		}
 	}
-
-	switch f.Header().Type {
-	case http2.FrameData:
-		d := f.(*http2.DataFrame)
-		log.Println("Got data frame", string(d.Data()))
-	case http2.FrameGoAway:
-		log.Println("Error code", f.(*http2.GoAwayFrame).ErrCode)
-		log.Println(string(f.(*http2.GoAwayFrame).DebugData()))
-	case http2.FrameRSTStream:
-		log.Println("Error code", f.(*http2.RSTStreamFrame).ErrCode)
-	}
-
-	log.Println("Done")
 
 }
