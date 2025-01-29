@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -29,7 +30,7 @@ func main() {
     cfg.RegisterFlags(flag.CommandLine)
     flag.Parse()
 
-    log.SetFlags(log.Lshortfile)
+    log.SetFlags(log.Lshortfile|log.Ltime)
 
     tlsConf := &tls.Config{
          //InsecureSkipVerify: true,
@@ -114,10 +115,57 @@ func main() {
 		return
 	}
 
-	
+	wg := &sync.WaitGroup{}
+
+	wg.Add(1)
+
+	processResponses := func() {
+		for {
+			// Read response
+			log.Println("Reading response ----------")
+			f, err = framer.ReadFrame()
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			log.Println("Got frame", f.Header().Type, "stream", f.Header().StreamID)
+			switch f.Header().Type {
+			case http2.FrameHeaders:
+				b := f.(*http2.HeadersFrame).HeaderBlockFragment()
+				dec := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
+					log.Println(hf.Name, hf.Value)
+				})
+				h, err := dec.DecodeFull(b)
+				if err != nil {
+					log.Println(err)
+					return
+				}
+				log.Println("Decoded headers", h)
+			case http2.FrameData:
+				d := f.(*http2.DataFrame)
+				log.Println("Got data frame", string(d.Data()))
+			case http2.FrameGoAway:
+				log.Println("Error code", f.(*http2.GoAwayFrame).ErrCode)
+				log.Println(string(f.(*http2.GoAwayFrame).DebugData()))
+			case http2.FrameRSTStream:
+				log.Println("Error code", f.(*http2.RSTStreamFrame).ErrCode)
+				log.Println("String", f.(*http2.RSTStreamFrame).String())
+				return
+			case http2.FramePing:
+				log.Println("Ping")
+			}
+		}
+	}
+
+	go func() {
+		processResponses()
+		wg.Done()
+		log.Println("Done reading responses")
+	}()
 
 	log.Println("Sending data", influxData)
 	for _, c := range influxData {
+
 		part := string(c)
 		err = framer.WriteData(streamID, false, []byte(part))
 		if err != nil {
@@ -127,48 +175,7 @@ func main() {
 		time.Sleep(1000*time.Millisecond)
 	}
 
-	// time.Sleep(40 * time.Second)
-	// err = framer.WriteData(streamID, false, []byte(influxData1))
-	// if err != nil {
-	// 	log.Println(err)
-	// 	return
-	// }
+	wg.Wait()
 
-	for {
-		// Read response
-		log.Println("Reading response ----------")
-		f, err = framer.ReadFrame()
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		log.Println("Got frame", f.Header().Type)
-		switch f.Header().Type {
-		case http2.FrameHeaders:
-			log.Println("Got headers frame", f.(*http2.HeadersFrame).StreamID)
-			b := f.(*http2.HeadersFrame).HeaderBlockFragment()
-			dec := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
-				log.Println(hf.Name, hf.Value)
-			})
-			h, err := dec.DecodeFull(b)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			log.Println("Decoded headers", h)
-		case http2.FrameData:
-			d := f.(*http2.DataFrame)
-			log.Println("Got data frame", string(d.Data()))
-		case http2.FrameGoAway:
-			log.Println("Error code", f.(*http2.GoAwayFrame).ErrCode)
-			log.Println(string(f.(*http2.GoAwayFrame).DebugData()))
-		case http2.FrameRSTStream:
-			log.Println("Error code", f.(*http2.RSTStreamFrame).ErrCode)
-			log.Println("String", f.(*http2.RSTStreamFrame).String())
-		case http2.FramePing:
-			log.Println("Ping")
-			return
-		}
-	}
-
+	log.Println("Closing stream")
 }
