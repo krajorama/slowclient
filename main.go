@@ -103,7 +103,7 @@ func main() {
 	enc.WriteField(hpack.HeaderField{Name: "content-length", Value: fmt.Sprintf("%d", len(influxData))})
 
 
-	log.Println("Sending headers, length", len(headers.Bytes()))
+	log.Println("Sending headers, length", len(headers.Bytes()), "content-length", len(influxData))
 	err = framer.WriteHeaders(http2.HeadersFrameParam{
 		StreamID:      streamID,
 		BlockFragment: headers.Bytes(),
@@ -172,7 +172,7 @@ func main() {
 			log.Println(err)
 			return
 		}
-		time.Sleep(1000*time.Millisecond)
+		time.Sleep(1*time.Millisecond)
 	}
 
 	wg.Wait()
